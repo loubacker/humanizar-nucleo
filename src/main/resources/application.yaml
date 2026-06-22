@@ -16,6 +16,22 @@ spring:
         jwt:
           jwk-set-uri: ${AUTH_SERVER_URL}/oauth2/jwks
 
+  # Configurações do RabbitMQ
+  rabbitmq:
+    addresses: ${RABBITMQ_URL}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+      retry:
+        enabled: false
+    listener:
+      simple:
+        default-requeue-rejected: false
+        prefetch: 20
+        concurrency: 2
+        max-concurrency: 8
+
   # Configurações de DataBase
   datasource:
     url: ${DB_URL}

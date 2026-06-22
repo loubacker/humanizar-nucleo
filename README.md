@@ -1,31 +1,31 @@
 <div align="center">
   <h1>Humanizar - Núcleo (Microservice)</h1>
-  <p>Gestão dos Núcleos e Abordagens da clínica Humanizar.</p>
+  <p>Gestão dos Núcleos e Abordagens da clínica Humanizar, com responder de retrieve via mensageria.</p>
 
   <img alt="Java" src="https://img.shields.io/badge/Java-25-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" />
-  <img alt="Spring Boot" src="https://img.shields.io/badge/Spring_Boot-4.0.5-6DB33F?style=for-the-badge&logo=spring-boot&logoColor=white" />
+  <img alt="Spring Boot" src="https://img.shields.io/badge/Spring_Boot-4.1.0-6DB33F?style=for-the-badge&logo=spring-boot&logoColor=white" />
   <img alt="GraalVM" src="https://img.shields.io/badge/GraalVM_Native-25-E76F00?style=for-the-badge&logo=oracle&logoColor=white" />
+  <img alt="RabbitMQ" src="https://img.shields.io/badge/RabbitMQ-%23FF6600.svg?style=for-the-badge&logo=rabbitmq&logoColor=white" />
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" />
 </div>
 
 <br/>
 
-Serviço REST síncrono responsável pelo CRUD de Núcleos e Abordagens. Protegido por OAuth2 JWT com RBAC, arquitetura Hexagonal e opção de runtime em binário nativo (GraalVM Native Image).
-
-Página de serviços onde os núcleos são listados: [https://humanizar.aju.br/servicos](https://humanizar.feira.br/servicos)
+Serviço REST síncrono responsável pelo CRUD de Núcleos e Abordagens e, adicionalmente, responder de retrieve resiliente via mensageria: consome comandos de consulta pelo RabbitMQ, lê o núcleo e devolve o resultado por outbox transacional (callback roteado dinamicamente). Protegido por OAuth2 JWT com RBAC, arquitetura Hexagonal e opção de runtime em binário nativo (GraalVM Native Image).
 
 ## Arquitetura e Padrões
 
 - Arquitetura Hexagonal (`application`, `domain`, `infrastructure`).
-- DTOs imutáveis com Java Records.
-- Mappers e use cases dedicados por operação.
+- DTOs imutáveis com Java Records; mappers e use cases dedicados por operação.
 - Adapters de domínio isolando JPA via ports.
-- Exception handler global com respostas padronizadas.
 - Controle de acesso por role via `@PreAuthorize` (RBAC).
+- Responder de retrieve resiliente via mensageria: Outbox transacional para publicação confiável + Inbox idempotente (`processed_event`), espelhando o padrão do `patient-service`.
+- ACK/NACK manual do RabbitMQ com política explícita por tipo de erro.
 - Retry automático em falhas transientes nos endpoints GET (`@Retry`).
+- Exception handler global com respostas padronizadas (`ReasonCode` seccionado por status HTTP).
 - Execução otimizada com Virtual Threads e opção de binário nativo (GraalVM Native Image).
 
-## Interfaces Internas Protegidas (REST)
+## Interfaces internas protegidas (REST)
 
 Base path: `/api/v1`
 
@@ -45,32 +45,113 @@ Base path: `/api/v1`
 
 Leitura requer apenas autenticação; escrita exige `ROLE_ADMINISTRADOR`.
 
-## ⛓️‍💥 Resiliência
+## 🔄 Comunicação Assíncrona (RabbitMQ)
 
-- `@Retry` (`ResilientMethodsConfig`) nos endpoints GET: máximo 2 tentativas, timeout 30s, predicate transiente de banco.
-- Exception handler global retorna `ErrorResponseDTO` com status, reason code, mensagem, path e timestamp.
+### Inbound — Comando de Retrieve
+
+**Exchange `humanizar.nucleo.command`**
+- `cmd.nucleo.retrieve.v1`
+
+Fila principal:
+- `humanizar.nucleo.retrieve`
+
+DLQ:
+- `humanizar.nucleo.retrieve.dlq`
+
+Contrato consumido: `InboundEnvelopeDTO<NucleoRetrieveCommandDTO>` (carrega `nucleoId` + `callbackExchange`/`callbackRoutingKey` de retorno).
+
+### Outbound — Resultado do Retrieve
+
+**Exchange `humanizar.nucleo.event`**
+- `ev.nucleo.retrieved.v1`
+- `ev.nucleo.rejected.v1`
+
+Contrato publicado: `OutboundEnvelopeDTO<T>` — `NucleoRetrievedDTO` (com o nome do núcleo) no sucesso; `NucleoRejectedDTO` com `NUCLEO_NOT_FOUND` quando o núcleo não existe. Publicação confiável via outbox; o callback é roteado dinamicamente para a exchange/routing key informadas no comando.
+
+## ⛓️‍💥 Resiliência e Tolerância a Falhas
+
+### ACK/NACK manual
+
+`rabbitListenerContainerFactory` roda com `AcknowledgeMode.MANUAL` (configuração Java).
+
+Política no consumer:
+- `ack`: sucesso e evento duplicado.
+- `nackRetry` (`requeue=true`): erro retentável.
+- `nackDeadLetter` (`requeue=false`): parse inválido e erro não retentável.
+
+Implementação central: `RabbitAcknowledgementConfig`.
+
+### Retry transiente (endpoints GET)
+
+`@Retry` via `ResilientMethodsConfig`.
+
+- Max retries: 2, timeout: 30s.
+- Predicate: exceções transientes de banco (`TransientDataAccessException`, `RecoverableDataAccessException`, `CannotCreateTransactionException`, `QueryTimeoutException`).
+
+### Outbox states
+
+- `NEW`
+- `LOCKED`
+- `PUBLISHED`
+- `FAILED`
+- `DEAD`
+
+Com retentativa por `OutboxRetryPolicy` e controle de ownership/fencing por `instanceId`.
+
+### ReasonCode
+
+28 códigos com status HTTP, mensagem e flag `isRetryable()` por código (accessors duplos `httpStatus()`/`getStatusCode()`), seccionados por status — diferenciam falhas retentáveis (5xx transientes) de terminais (4xx).
+
+### Idempotência
+
+Antes de processar a regra, o consumer valida duplicidade via `ProcessedEventGuard`, que verifica a unicidade de `(consumer_name, event_id)` na tabela `processed_event`.
+
+## 🛠️ Workers em Background
+
+### OutboxRelayWorker (5s)
+
+- Faz claim de eventos em `NEW`, `FAILED` e `LOCKED`.
+- Aplica lock ownership por `instanceId` (fencing).
+- Publica de forma assíncrona com controle de paralelismo.
+
+### OutboxEventProcessor
+
+Transições de status:
+- sucesso: `LOCKED -> PUBLISHED`
+- falha com retry: `LOCKED -> FAILED` (com `nextRetryAt`)
+- tentativas esgotadas: `LOCKED -> DEAD`
+
+### RetentionWorker (1h)
+
+- Remove outbox antigo (`PUBLISHED` e `DEAD`) com mais de 48h.
+- Remove `processed_event` antigo com mais de 90 dias.
 
 ## 🔐 Segurança
 
-- OAuth2 Resource Server JWT, JWK configurado por `AUTH_SERVER_URL`.
+- API interna protegida por OAuth2 Resource Server JWT.
+- JWK configurado por `AUTH_SERVER_URL`.
 - RBAC: escrita exige `ROLE_ADMINISTRADOR`; leitura requer apenas autenticação.
-- Sessão stateless, sem exposição de endpoint público.
+- Sessão stateless, sem exposição de endpoint público (exceto `/actuator/**`).
 
-## Estrutura do Projeto
+## Estrutura do projeto
 
 ```text
 src/main/java/com/humanizar/nucleo/
-|-- application/                   # dto, mapper, service, usecase
-|-- domain/                        # model, enums, exception, port
-`-- infrastructure/                # adapter, config, controller, persistence
+|-- application/
+|   |-- catalog/                    # Exchange/Queue/RoutingKey/ConsumerCatalog
+|   |-- dto/                        # DTOs imutaveis (nucleo, abordagem, envelope)
+|   |-- mapper/                     # mappers DTO <-> dominio
+|   |-- messaging/                  # inbound (retrieve) e outbound (resultado via outbox)
+|   `-- service/                    # use cases CRUD (nucleo/abordagem) + retrieve
+|-- domain/                         # modelos, enums, ports, exceptions
+`-- infrastructure/                 # controllers, adapters, rabbit, outbox, persistence
 ```
-
-## Como executar localmente
 
 ### Pré-requisitos
 - JDK 25
 - Maven 3.9+
 - PostgreSQL
+- RabbitMQ
 
 ### Variáveis de Ambiente (`.env`)
 
@@ -78,6 +159,7 @@ src/main/java/com/humanizar/nucleo/
 DB_URL=jdbc:postgresql://localhost:5432/db
 DB_USERNAME=postgres
 DB_PASSWORD=secret
+RABBITMQ_URL=amqp://admin:admin@localhost:5672
 AUTH_SERVER_URL=http://localhost:8080
 ```
 

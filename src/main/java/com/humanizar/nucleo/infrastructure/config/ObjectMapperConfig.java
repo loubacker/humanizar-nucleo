@@ -10,6 +10,13 @@ import com.humanizar.nucleo.application.dto.abordagem.AbordagemUpdateDTO;
 import com.humanizar.nucleo.application.dto.nucleo.NucleoRegisterDTO;
 import com.humanizar.nucleo.application.dto.nucleo.NucleoRetrieveDTO;
 import com.humanizar.nucleo.application.dto.nucleo.NucleoUpdateDTO;
+import com.humanizar.nucleo.application.messaging.inbound.dto.InboundEnvelopeDTO;
+import com.humanizar.nucleo.application.messaging.inbound.dto.NucleoRetrieveCommandDTO;
+import com.humanizar.nucleo.application.messaging.outbound.dto.NucleoRejectedDTO;
+import com.humanizar.nucleo.application.messaging.outbound.dto.NucleoRetrievedDTO;
+import com.humanizar.nucleo.application.messaging.outbound.dto.OutboundEnvelopeDTO;
+import com.humanizar.nucleo.domain.model.enums.OutboxStatus;
+import com.humanizar.nucleo.domain.model.enums.ProcessedResult;
 import com.humanizar.nucleo.domain.model.enums.ReasonCode;
 import com.humanizar.nucleo.infrastructure.controller.dto.ErrorResponseDTO;
 import com.humanizar.nucleo.infrastructure.controller.dto.SuccessResponseDTO;
@@ -46,6 +53,13 @@ public class ObjectMapperConfig {
             registerJsonBinding(hints, ErrorResponseDTO.class);
             registerJsonBinding(hints, SuccessResponseDTO.class);
             registerJsonBinding(hints, ReasonCode.class);
+            registerJsonBinding(hints, InboundEnvelopeDTO.class);
+            registerJsonBinding(hints, OutboundEnvelopeDTO.class);
+            registerJsonBinding(hints, NucleoRetrieveCommandDTO.class);
+            registerJsonBinding(hints, NucleoRetrievedDTO.class);
+            registerJsonBinding(hints, NucleoRejectedDTO.class);
+            registerJsonBinding(hints, OutboxStatus.class);
+            registerJsonBinding(hints, ProcessedResult.class);
         }
 
         private void registerJsonBinding(RuntimeHints hints, Class<?> type) {
