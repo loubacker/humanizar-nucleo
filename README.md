@@ -129,7 +129,8 @@ Transições de status:
 ## 🔐 Segurança
 
 - API interna protegida por OAuth2 Resource Server JWT.
-- JWK configurado por `AUTH_SERVER_URL`.
+- Assinatura RS256 validada pelo JWKS completo de `KEYCLOAK_ISSUER`.
+- `JWT_ISSUER` e `JWT_AUDIENCE` são obrigatórios; roles vêm de `realm_access.roles`.
 - RBAC: escrita exige `ROLE_ADMINISTRADOR`; leitura requer apenas autenticação.
 - Sessão stateless, sem exposição de endpoint público (exceto `/actuator/**`).
 
@@ -160,7 +161,9 @@ DB_URL=jdbc:postgresql://localhost:5432/db
 DB_USERNAME=postgres
 DB_PASSWORD=secret
 RABBITMQ_URL=amqp://admin:admin@localhost:5672
-AUTH_SERVER_URL=http://localhost:8080
+KEYCLOAK_ISSUER=<jwks-url-completa>
+JWT_ISSUER=<issuer-do-realm>
+JWT_AUDIENCE=<audience-obrigatoria>
 ```
 
 ### Execução local (JVM)

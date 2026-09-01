@@ -1,12 +1,8 @@
 package com.humanizar.nucleo.infrastructure.config;
 
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.Map;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,7 +18,6 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.util.StringUtils;
 
 @Configuration
 @EnableWebSecurity
@@ -49,54 +44,30 @@ public class SecurityConfig {
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(this::extractGrantedAuthorities);
+        converter.setJwtGrantedAuthoritiesConverter(this::keycloakRealmRoles);
         return converter;
     }
 
-    private Collection<GrantedAuthority> extractGrantedAuthorities(Jwt jwt) {
-        Set<String> roles = new LinkedHashSet<>();
-        roles.addAll(extractRoleValues(jwt.getClaims().get("role")));
-        roles.addAll(extractRoleValues(jwt.getClaims().get("roles")));
-
-        return roles.stream()
-                .filter(StringUtils::hasText)
-                .map(this::normalizeRoleAuthority)
-                .map(SimpleGrantedAuthority::new)
-                .collect(Collectors.toList());
-    }
-
-    private List<String> extractRoleValues(Object claimValue) {
-        if (claimValue == null) {
+    private Collection<GrantedAuthority> keycloakRealmRoles(Jwt jwt) {
+        Object realmAccessClaim = jwt.getClaim("realm_access");
+        if (!(realmAccessClaim instanceof Map<?, ?> realmAccess)) {
             return List.of();
         }
 
-        if (claimValue instanceof String claimAsString) {
-            if (claimAsString.contains(",")) {
-                return List.of(claimAsString.split(","));
-            }
-            return List.of(claimAsString);
+        Object rolesClaim = realmAccess.get("roles");
+        if (!(rolesClaim instanceof Collection<?> roles)) {
+            return List.of();
         }
 
-        if (claimValue instanceof Collection<?> claimAsCollection) {
-            return claimAsCollection.stream()
-                    .map(String::valueOf)
-                    .toList();
-        }
-
-        if (claimValue instanceof Object[] claimAsArray) {
-            return Stream.of(claimAsArray)
-                    .map(String::valueOf)
-                    .toList();
-        }
-
-        return List.of(String.valueOf(claimValue));
-    }
-
-    private String normalizeRoleAuthority(String rawRole) {
-        String normalizedRole = rawRole.trim();
-        if (normalizedRole.startsWith("ROLE_")) {
-            normalizedRole = normalizedRole.substring("ROLE_".length());
-        }
-        return "ROLE_" + normalizedRole.toUpperCase(Locale.ROOT);
+        return roles.stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .map(String::trim)
+                .filter(role -> !role.isBlank())
+                .map(role -> role.startsWith("ROLE_") ? role : "ROLE_" + role)
+                .distinct()
+                .map(SimpleGrantedAuthority::new)
+                .map(GrantedAuthority.class::cast)
+                .toList();
     }
 }
