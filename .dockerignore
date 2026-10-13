@@ -1,0 +1,7 @@
+target
+.env
+.env.*
+env
+.git
+.test-resources
+.idea
