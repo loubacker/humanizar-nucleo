@@ -55,3 +55,7 @@ path = "tests/infrastructure/diagnostics/startup_diagnostics_test.rs"
 [[test]]
 name = "postgres_race_test"
 path = "tests/infrastructure/persistence/postgres_race_test.rs"
+
+[[test]]
+name = "nucleo_command_mapper_test"
+path = "tests/application/messaging/inbound/mapper/nucleo_command_mapper_test.rs"
