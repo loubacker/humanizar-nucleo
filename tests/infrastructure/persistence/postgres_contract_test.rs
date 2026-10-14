@@ -3,6 +3,8 @@
 use axum::body::Body;
 use axum::http::Request;
 use http_body_util::BodyExt;
+use humanizar_nucleo::application::catalog::{ExchangeCatalog, RoutingKeyCatalog};
+use humanizar_nucleo::application::messaging::inbound::mapper::NucleoCommandMapper;
 use humanizar_nucleo::domain::model::messaging::{NucleoRetrieveCommand, ProcessingOutcome};
 use humanizar_nucleo::infrastructure::controller::{ApplicationState, create_router};
 use humanizar_nucleo::infrastructure::messaging::MessagingServices;
@@ -85,17 +87,34 @@ async fn real_postgres_preserves_crud_and_transactional_messaging_under_concurre
     .expect("JSON");
     assert_eq!(body["data"]["createdAt"], "2021-02-03T14:15:16.123456");
     let services = MessagingServices::new(fixture.database.clone(), 5);
-    let command = NucleoRetrieveCommand {
-        event_id: Uuid::new_v4(),
-        correlation_id: Uuid::new_v4(),
-        source_event_id: Uuid::new_v4(),
-        nucleo_id: id,
-        callback_exchange: "test.callbacks".to_owned(),
-        actor_id: Some(Uuid::new_v4()),
-        user_agent: Some("fixture-agent".to_owned()),
-        origin_ip: Some("127.0.0.1".to_owned()),
-        occurred_at: civil,
-    };
+    let notification_request_id = Uuid::new_v4();
+    assert_ne!(notification_request_id, id);
+    let envelope = json!({
+        "eventId": Uuid::new_v4(),
+        "correlationId": Uuid::new_v4(),
+        "producerService": "humanizar-notification",
+        "exchangeName": ExchangeCatalog::NUCLEO_COMMAND,
+        "routingKey": RoutingKeyCatalog::NUCLEO_RETRIEVE_V1,
+        "aggregateType": "NotificationRequest",
+        "aggregateId": notification_request_id,
+        "eventVersion": 1,
+        "occurredAt": civil,
+        "actorId": Uuid::new_v4(),
+        "userAgent": "fixture-agent",
+        "originIp": "127.0.0.1",
+        "payload": {
+            "sourceEventId": Uuid::new_v4(),
+            "nucleoId": id,
+            "callbackExchange": "test.callbacks",
+            "callbackRoutingKey": RoutingKeyCatalog::NUCLEO_RETRIEVED_V1
+        }
+    });
+    let command = NucleoCommandMapper::parse(
+        &serde_json::to_vec(&envelope).expect("notification envelope"),
+        ExchangeCatalog::NUCLEO_COMMAND,
+        RoutingKeyCatalog::NUCLEO_RETRIEVE_V1,
+    )
+    .expect("notification command");
     let mut tasks = tokio::task::JoinSet::new();
     for _ in 0..12 {
         let port = Arc::clone(&services.processed);
@@ -134,6 +153,13 @@ async fn real_postgres_preserves_crud_and_transactional_messaging_under_concurre
     );
     assert_eq!(callback["userAgent"], "fixture-agent");
     assert_eq!(callback["originIp"], "127.0.0.1");
+    assert_eq!(callback["aggregateType"], "Nucleo");
+    assert_eq!(callback["aggregateId"], id.to_string());
+    assert_eq!(callback["payload"]["nucleoId"], id.to_string());
+    assert_eq!(
+        callback["payload"]["sourceEventId"],
+        command.source_event_id.to_string()
+    );
     assert_eq!(
         callback["payload"]["requestEventId"],
         command.event_id.to_string()
