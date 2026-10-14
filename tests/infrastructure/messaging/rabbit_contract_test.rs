@@ -95,11 +95,28 @@ async fn real_rabbit_processing_replay_confirms_returns_and_shutdown() {
     let event_id = Uuid::new_v4();
     let correlation_id = Uuid::new_v4();
     let source_event_id = Uuid::new_v4();
-    let command = json!({"eventId":event_id, "correlationId":correlation_id, "producerService":"test.producer",
-        "exchangeName":ExchangeCatalog::NUCLEO_COMMAND, "routingKey":RoutingKeyCatalog::NUCLEO_RETRIEVE_V1,
-        "aggregateType":"Nucleo", "aggregateId":id, "eventVersion":1, "occurredAt":"2026-10-11T00:00:00",
-        "actorId":null, "userAgent":null, "originIp":null,
-        "payload":{"sourceEventId":source_event_id, "nucleoId":id, "callbackExchange":exchange, "callbackRoutingKey":"legacy.required"}});
+    let notification_request_id = Uuid::new_v4();
+    assert_ne!(notification_request_id, id);
+    let command = json!({
+        "eventId": event_id,
+        "correlationId": correlation_id,
+        "producerService": "humanizar-notification",
+        "exchangeName": ExchangeCatalog::NUCLEO_COMMAND,
+        "routingKey": RoutingKeyCatalog::NUCLEO_RETRIEVE_V1,
+        "aggregateType": "NotificationRequest",
+        "aggregateId": notification_request_id,
+        "eventVersion": 1,
+        "occurredAt": "2026-10-13T00:00:00",
+        "actorId": null,
+        "userAgent": null,
+        "originIp": null,
+        "payload": {
+            "sourceEventId": source_event_id,
+            "nucleoId": id,
+            "callbackExchange": exchange,
+            "callbackRoutingKey": RoutingKeyCatalog::NUCLEO_RETRIEVED_V1
+        }
+    });
     channel
         .confirm_select(ConfirmSelectOptions::default())
         .await
@@ -126,6 +143,9 @@ async fn real_rabbit_processing_replay_confirms_returns_and_shutdown() {
         .expect("callback")
         .expect("delivery");
     let payload: Value = serde_json::from_slice(&delivery.data).expect("JSON callback");
+    assert_eq!(payload["aggregateType"], "Nucleo");
+    assert_eq!(payload["aggregateId"], id.to_string());
+    assert_eq!(payload["payload"]["nucleoId"], id.to_string());
     assert_eq!(payload["payload"]["requestEventId"], event_id.to_string());
     assert_eq!(
         payload["payload"]["sourceEventId"],
