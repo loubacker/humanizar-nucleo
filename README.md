@@ -31,10 +31,6 @@ usam envelopes de sucesso e erro ligados à correlação e à observabilidade.
 - persistência atômica dos recibos de processamento e callbacks na outbox;
 - rastreabilidade das operações por código, correlação e resultado.
 
-O Keycloak mantém a autenticação e as roles. O serviço consome o JWT para
-autorizar suas rotas. Os projetos `humanizar-nucleo-service` e
-`humanizar-nucleo-relacionamento` mantêm responsabilidades próprias.
-
 ## Arquitetura e Padrões
 
 - camadas `application`, `domain` e `infrastructure` com dependências orientadas
