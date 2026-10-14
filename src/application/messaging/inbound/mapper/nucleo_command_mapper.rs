@@ -69,7 +69,7 @@ impl NucleoCommandMapper {
         let correlation_id = envelope.correlation_id.ok_or_else(missing)?;
         required(envelope.producer_service, ReasonCode::InboundRequiredField)?;
         required(envelope.aggregate_type, ReasonCode::InboundRequiredField)?;
-        let aggregate_id = envelope.aggregate_id.ok_or_else(missing)?;
+        envelope.aggregate_id.ok_or_else(missing)?;
         let occurred_at = envelope.occurred_at.ok_or_else(missing)?;
         if envelope.event_version != Some(1) {
             return Err(NucleoException::new(ReasonCode::UnsupportedEventVersion));
@@ -97,9 +97,6 @@ impl NucleoCommandMapper {
         }
         let payload = envelope.payload.ok_or_else(missing)?;
         let nucleo_id = payload.nucleo_id.ok_or_else(missing)?;
-        if aggregate_id != nucleo_id {
-            return Err(NucleoException::new(ReasonCode::ValidationError));
-        }
         let source_event_id = payload.source_event_id.ok_or_else(missing)?;
         let callback_exchange =
             required(payload.callback_exchange, ReasonCode::InboundRequiredField)?;
